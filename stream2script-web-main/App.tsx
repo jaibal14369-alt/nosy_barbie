@@ -1,0 +1,268 @@
+
+import React, { useState, useEffect } from 'react';
+import { Layout } from './components/Layout';
+import { FileUploader } from './components/FileUploader';
+import { LiveSession } from './components/LiveSession';
+import { ScriptView } from './components/ScriptView';
+import { HistoryView } from './components/HistoryView';
+import { geminiService } from './services/geminiService';
+import { AppMode, ScriptResult, UILanguage, AppView, HistoryItem } from './types';
+
+const translations = {
+  English: {
+    hero: "From Stream to Script in Seconds.",
+    sub: "Transform your podcasts, videos, and meetings into professional scripts, screenplays, and summaries using advanced multimodal AI.",
+    startLive: "Start Live Scribe",
+    uploadBtn: "Upload File",
+    diarization: "Smart Diarization",
+    diarizationSub: "Automatically identifies and separates different speakers with high accuracy.",
+    formatting: "Script Formatting",
+    formattingSub: "Converts raw dialogue into professional Hollywood-style layouts.",
+    realtime: "Real-time Analysis",
+    realtimeSub: "Get summaries and actionable insights while the stream is happening."
+  },
+  Telugu: {
+    hero: "సెకన్లలో స్ట్రీమ్ నుండి స్క్రిప్ట్‌కు.",
+    sub: "అధునాతన మల్టీమోడల్ AI ఉపయోగించి మీ పాడ్‌కాస్ట్‌లు, వీడియోలు మరియు సమావేశాలను వృత్తిపరమైన స్క్రిప్ట్‌లు మరియు సారాంశాలుగా మార్చండి.",
+    startLive: "లైవ్ స్క్రైబ్ ప్రారంభించండి",
+    uploadBtn: "ఫైల్‌ను అప్‌లోడ్ చేయండి",
+    diarization: "స్మార్ట్ డైరైజేషన్",
+    diarizationSub: "వివిధ స్పీకర్లను స్వయంచాలకంగా గుర్తిస్తుంది.",
+    formatting: "స్క్రిప్ట్ ఫార్మాటింగ్",
+    formattingSub: "ముడి డైలాగ్‌ను ప్రొఫెషనల్ స్క్రీన్‌ప్లే లేఅవుట్‌లుగా మారుస్తుంది.",
+    realtime: "రియల్ టైమ్ విశ్లేషణ",
+    realtimeSub: "స్ట్రీమ్ జరుగుతున్నప్పుడే సారాంశాలను పొందండి."
+  },
+  Hindi: {
+    hero: "स्ट्रीम से स्क्रिप्ट तक, सेकंडों में।",
+    sub: "उन्नत मल्टीमॉडल AI का उपयोग करके अपने पॉडकास्ट, वीडियो और मीटिंग्स को पेशेवर स्क्रिप्ट और सारांश में बदलें।",
+    startLive: "लाइव स्क्राइब शुरू करें",
+    uploadBtn: "फ़ाइल अपलोड करें",
+    diarization: "स्मार्ट डायराइजेशन",
+    diarizationSub: "विभिन्न वक्ताओं को स्वचालित रूप से पहचानता है।",
+    formatting: "स्क्रिप्ट स्वरूपण",
+    formattingSub: "संवादों को पेशेवर स्क्रीनप्ले लेआउट में बदलता है।",
+    realtime: "रीयल-टाइम विश्लेषण",
+    realtimeSub: "स्ट्रीम के दौरान ही सारांश प्राप्त करें।"
+  }
+};
+
+const App: React.FC = () => {
+  const [uiLang, setUiLang] = useState<UILanguage>('English');
+  const [view, setView] = useState<AppView>('home');
+  const [mode, setMode] = useState<AppMode | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState("Analyzing Media");
+  const [result, setResult] = useState<ScriptResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem('s2s_theme');
+      if (saved) return saved === 'dark';
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    } catch { return false; }
+  });
+
+  const apiKey = (window as any).process?.env?.API_KEY || process.env.API_KEY || "";
+  const t = translations[uiLang];
+
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('s2s_theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('s2s_theme', 'light');
+    }
+  }, [isDarkMode]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('s2s_history');
+      if (saved) setHistory(JSON.parse(saved));
+    } catch (e) {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('s2s_history', JSON.stringify(history));
+    } catch (e) {}
+  }, [history]);
+
+  const handleFileSelect = async (file: File, transLang: string) => {
+    if (!apiKey) {
+      setError("Configuration Required: Please add API_KEY to your Vercel Environment Variables.");
+      return;
+    }
+    setLoadingText("Extracting Media Data");
+    setIsLoading(true);
+    setError(null);
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const resultBase64 = reader.result;
+        if (typeof resultBase64 !== 'string') return;
+        const base64Data = resultBase64.split(',')[1];
+        try {
+          const res = await geminiService.processMedia(base64Data, file.type, transLang);
+          setResult(res);
+          setMode(AppMode.UPLOAD);
+          setHistory(prev => [{ id: Math.random().toString(36).substring(7), date: new Date().toISOString(), result: res }, ...prev]);
+        } catch (err: any) {
+          setError(err.message || "Failed to analyze media.");
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      setError("Error reading local file.");
+      setIsLoading(false);
+    }
+  };
+
+  const handleYouTubeSubmit = async (url: string, transLang: string) => {
+    if (!apiKey) {
+      setError("Configuration Required: API_KEY is missing.");
+      return;
+    }
+    setLoadingText("Grounding AI Research");
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await geminiService.processYouTubeUrl(url, transLang);
+      setResult(res);
+      setMode(AppMode.UPLOAD);
+      setHistory(prev => [{ id: Math.random().toString(36).substring(7), date: new Date().toISOString(), result: res }, ...prev]);
+    } catch (err: any) {
+      setError(err.message || "Failed to process YouTube link.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const reset = () => {
+    setMode(null);
+    setResult(null);
+    setError(null);
+    setIsLoading(false);
+  };
+
+  return (
+    <Layout 
+      uiLang={uiLang} 
+      onLangChange={setUiLang} 
+      activeView={view} 
+      onViewChange={setView}
+      isDarkMode={isDarkMode}
+      toggleDarkMode={() => setIsDarkMode(!isDarkMode)}
+    >
+      {!apiKey && view === 'home' && (
+        <div className="max-w-4xl mx-auto mb-12 p-8 bg-amber-50 dark:bg-amber-900/10 border-2 border-amber-200 dark:border-amber-900/30 rounded-[2.5rem] flex flex-col md:flex-row items-center md:items-start space-y-6 md:space-y-0 md:space-x-8 animate-fadeIn text-center md:text-left shadow-2xl shadow-amber-500/5">
+          <div className="w-16 h-16 bg-amber-100 dark:bg-amber-900/20 text-amber-600 rounded-3xl flex items-center justify-center flex-shrink-0 shadow-inner">
+            <i className="fas fa-key text-2xl"></i>
+          </div>
+          <div>
+            <h3 className="font-black text-amber-900 dark:text-amber-400 uppercase text-xs tracking-widest mb-3">Vercel Setup Required</h3>
+            <p className="text-sm text-amber-800/80 dark:text-amber-500/80 font-medium leading-relaxed mb-4">
+              The application is running but needs an <span className="font-black">API_KEY</span> to perform transcriptions. Please add it to your Vercel Project Settings and redeploy.
+            </p>
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" className="inline-flex items-center space-x-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-amber-600/20">
+              <span>Get Free Key</span>
+              <i className="fas fa-external-link-alt text-[8px]"></i>
+            </a>
+          </div>
+        </div>
+      )}
+
+      {view === 'history' && (
+        <HistoryView 
+          items={history} 
+          onSelectItem={(item) => { setResult(item.result); setMode(AppMode.UPLOAD); setView('home'); }} 
+          onDeleteItem={(id) => setHistory(prev => prev.filter(i => i.id !== id))} 
+        />
+      )}
+
+      {view === 'home' && (
+        <>
+          {!mode && !isLoading && (
+            <div className="space-y-20 py-10 animate-fadeIn">
+              <div className="text-center max-w-5xl mx-auto">
+                <div className="inline-block px-4 py-1.5 rounded-full bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 text-[10px] font-black uppercase tracking-[0.3em] mb-10 shadow-sm border border-violet-200/50 dark:border-violet-700/50">
+                  Version 2.0 Pro • Cloud Ready
+                </div>
+                <h2 className="text-5xl md:text-8xl font-black text-slate-900 dark:text-white mb-10 tracking-tighter leading-[0.9] lg:px-20">
+                  {t.hero.split('Script').map((part, i, arr) => (
+                    <React.Fragment key={i}>
+                      {part}
+                      {i < arr.length - 1 && (
+                        <span className="bg-gradient-to-r from-violet-500 via-fuchsia-500 to-violet-500 bg-clip-text text-transparent">
+                          Script
+                        </span>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </h2>
+                <p className="text-lg text-slate-500 dark:text-slate-400 mb-14 leading-relaxed max-w-2xl mx-auto font-medium">
+                  {t.sub}
+                </p>
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-5">
+                  <button onClick={() => setMode(AppMode.LIVE)} className="w-full sm:w-auto px-10 py-5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-[2rem] font-black shadow-2xl shadow-violet-600/30 hover:scale-105 transition-all text-[12px] tracking-[0.2em] uppercase">
+                    <i className="fas fa-microphone-alt mr-3"></i> {t.startLive}
+                  </button>
+                  <button onClick={() => document.getElementById('uploader')?.scrollIntoView({ behavior: 'smooth' })} className="w-full sm:w-auto px-10 py-5 bg-white dark:bg-slate-900 text-slate-900 dark:text-white border-2 border-slate-200 dark:border-slate-800 rounded-[2rem] font-black hover:bg-slate-50 dark:hover:bg-slate-800 transition-all text-[12px] tracking-[0.2em] uppercase">
+                    <i className="fas fa-file-upload mr-3"></i> {t.uploadBtn}
+                  </button>
+                </div>
+              </div>
+
+              <div id="uploader" className="pt-10 scroll-mt-28">
+                <FileUploader 
+                  onFileSelect={handleFileSelect} 
+                  onUrlSubmit={handleYouTubeSubmit}
+                  isLoading={isLoading} 
+                />
+              </div>
+            </div>
+          )}
+
+          {isLoading && (
+            <div className="flex flex-col items-center justify-center py-32 space-y-12 animate-fadeIn">
+              <div className="relative group">
+                {/* Glow Background */}
+                <div className="absolute inset-0 bg-violet-500/20 blur-3xl rounded-full scale-150 animate-pulse"></div>
+                {/* Spinner Track and Spinner */}
+                <div className="w-48 h-48 border-[10px] border-slate-200/50 dark:border-white/5 rounded-full border-t-violet-600 animate-spin shadow-2xl relative z-10"></div>
+                {/* Center Icon */}
+                <div className="absolute inset-0 flex items-center justify-center z-20">
+                   <div className="bg-white dark:bg-slate-900 p-6 rounded-full shadow-xl">
+                      <i className="fas fa-brain text-violet-600 text-5xl animate-pulse"></i>
+                   </div>
+                </div>
+              </div>
+              <div className="text-center relative z-10">
+                <h3 className="text-4xl font-black text-slate-900 dark:text-white tracking-tighter uppercase mb-3 bg-gradient-to-r from-violet-600 to-fuchsia-600 bg-clip-text text-transparent">{loadingText}</h3>
+                <p className="text-slate-500 dark:text-violet-400/80 text-[11px] font-black tracking-[0.6em] uppercase">Powered by Gemini 3 Pro</p>
+              </div>
+            </div>
+          )}
+
+          {error && (
+             <div className="max-w-2xl mx-auto bg-white dark:bg-slate-950 border border-red-200 dark:border-red-900/40 rounded-[3rem] p-16 text-center shadow-2xl animate-fadeIn">
+               <i className="fas fa-triangle-exclamation text-red-500 text-4xl mb-6"></i>
+               <h3 className="text-2xl font-black mb-4">Process Failed</h3>
+               <p className="text-slate-500 dark:text-slate-400 mb-8 font-medium leading-relaxed">{error}</p>
+               <button onClick={reset} className="px-10 py-4 bg-slate-900 text-white rounded-2xl font-black uppercase text-[11px] tracking-widest">Reset</button>
+             </div>
+          )}
+
+          {mode === AppMode.LIVE && !result && <div className="animate-fadeIn"><LiveSession onStop={reset} /></div>}
+          {result && !isLoading && <div className="animate-fadeIn"><ScriptView data={result} onReset={reset} /></div>}
+        </>
+      )}
+    </Layout>
+  );
+};
+
+export default App;
